@@ -3,11 +3,18 @@
 import { CheckCircleIcon, CalendarDotsIcon } from "@phosphor-icons/react/dist/ssr";
 import Link from "next/link";
 import { Plan } from "@/lib/types";
-import { Milestone } from "@/lib/courses";
+import { Milestone, Teammate } from "@/lib/courses";
 import MilestoneCard from "./MilestoneCard";
+import { addMultipleCalendarEvents } from "@/lib/calendar-store";
+import { savePlan } from "@/lib/plans-store";
 
 type Props = {
   plan: Plan;
+  courseId: string;
+  courseCode: string;
+  assignmentId: string;
+  assignmentTitle: string;
+  teammates?: Teammate[];
   calendarPermission: "granted" | "skipped";
   googlePermission: "granted" | "skipped";
   onConfirm: (milestones: Milestone[]) => void;
@@ -31,11 +38,37 @@ function planMilestonesToMilestones(
 
 export default function ConfirmationStep({
   plan,
+  courseId,
+  courseCode,
+  assignmentId,
+  assignmentTitle,
+  teammates,
   calendarPermission,
   googlePermission,
   onConfirm,
   onClose,
 }: Props) {
+  function handleConfirm() {
+    const milestones = planMilestonesToMilestones(plan, calendarPermission, googlePermission);
+    
+    // Save the plan to localStorage (including teammates)
+    savePlan(plan, courseId, courseCode, assignmentId, assignmentTitle, teammates);
+    
+    // Create calendar events for all milestones
+    if (calendarPermission === "granted") {
+      const calendarEvents = plan.milestones.map((m) => ({
+        title: `📌 ${m.title}`,
+        date: new Date(m.targetDate + "T09:00:00"), // Set to 9 AM
+        color: "#8C1D40", // Maroon color for milestones
+        type: "milestone" as const,
+      }));
+      
+      addMultipleCalendarEvents(calendarEvents);
+    }
+    
+    onConfirm(milestones);
+  }
+
   return (
     <div className="p-8 flex flex-col gap-6 overflow-y-auto flex-1">
       {/* Success icon + heading */}
@@ -79,9 +112,7 @@ export default function ConfirmationStep({
           View in Calendar
         </Link>
         <button
-          onClick={() =>
-            onConfirm(planMilestonesToMilestones(plan, calendarPermission, googlePermission))
-          }
+          onClick={handleConfirm}
           className="bg-ink text-white text-[13px] font-medium px-5 py-2.5 rounded-full hover:bg-ink/90 transition-colors"
         >
           Done

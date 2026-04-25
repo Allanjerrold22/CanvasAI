@@ -145,99 +145,40 @@ async function handlePptx(file: File) {
 // ── PDF parsing ──
 
 async function handlePdf(file: File) {
-  // For PDF files, we extract text page by page.
-  // Since we can't use pdf.js on the server easily (it needs canvas),
-  // we'll do a simpler approach: extract raw text from the PDF binary.
   const buffer = await file.arrayBuffer();
   const bytes = new Uint8Array(buffer);
-  const text = extractPdfText(bytes);
+  const text = new TextDecoder("latin1").decode(bytes);
 
-  // Split into pages by form feed or by rough text chunks
-  const pages = text
-    .split(/\f/) // Form feed character separates pages in many PDFs
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0);
+  // Count pages by looking for /Type /Page objects (not /Pages)
+  // This regex matches "/Type /Page" but not "/Type /Pages"
+  const pageMatches = text.match(/\/Type\s*\/Page(?!s)\b/g);
+  const pageCount = pageMatches ? pageMatches.length : 1;
 
-  if (pages.length === 0) {
-    // If no form feeds, split by rough paragraph chunks
-    const chunks = text.split(/\n{3,}/);
-    const slidesFromChunks = chunks
-      .filter((c) => c.trim().length > 10)
-      .map((chunk, i) => {
-        const lines = chunk
-          .split("\n")
-          .map((l) => l.trim())
-          .filter((l) => l.length > 0);
-        return {
-          title: lines[0] || `Page ${i + 1}`,
-          bullets:
-            lines.length > 1
-              ? lines.slice(1)
-              : ["(No additional text on this page)"],
-          hasImage: false,
-        };
-      });
+  // Extract text per page using page stream boundaries
+  // PDFs have "endstream" markers between content streams
+  const slides = [];
 
-    if (slidesFromChunks.length === 0) {
-      return Response.json({
-        slides: [
-          {
-            title: file.name.replace(/\.pdf$/i, ""),
-            bullets: [
-              text.slice(0, 500) || "(Could not extract text from this PDF)",
-            ],
-            hasImage: false,
-          },
-        ],
-        fileName: file.name,
-      });
-    }
-
-    return Response.json({ slides: slidesFromChunks, fileName: file.name });
-  }
-
-  const slides = pages.map((page, i) => {
-    const lines = page
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
-    return {
-      title: lines[0] || `Page ${i + 1}`,
-      bullets:
-        lines.length > 1
-          ? lines.slice(1).slice(0, 10) // Cap at 10 bullets per page
-          : ["(No additional text on this page)"],
-      hasImage: false,
-    };
-  });
-
-  return Response.json({ slides, fileName: file.name });
-}
-
-/**
- * Basic PDF text extraction — reads text objects from the PDF binary.
- * This is a simplified parser that handles common PDF text encodings.
- */
-function extractPdfText(bytes: Uint8Array): string {
-  const str = new TextDecoder("latin1").decode(bytes);
-  const textParts: string[] = [];
-
-  // Match text between BT (begin text) and ET (end text) operators
+  // Try to extract text from BT/ET blocks and group by rough position in file
   const btEtRegex = /BT\s([\s\S]*?)ET/g;
+  const allTextBlocks: string[] = [];
   let btMatch;
 
-  while ((btMatch = btEtRegex.exec(str)) !== null) {
+  while ((btMatch = btEtRegex.exec(text)) !== null) {
     const block = btMatch[1];
+    const parts: string[] = [];
 
-    // Extract text from Tj, TJ, ', and " operators
-    // Tj: (text) Tj
+    // Tj operator
     const tjRegex = /\(([^)]*)\)\s*Tj/g;
     let tjMatch;
     while ((tjMatch = tjRegex.exec(block)) !== null) {
-      textParts.push(decodePdfString(tjMatch[1]));
+      const decoded = tjMatch[1]
+        .replace(/\\n/g, "\n").replace(/\\r/g, "")
+        .replace(/\\\(/g, "(").replace(/\\\)/g, ")")
+        .replace(/\\\\/g, "\\");
+      if (decoded.trim()) parts.push(decoded.trim());
     }
 
-    // TJ: [(text) num (text) ...] TJ
+    // TJ array operator
     const tjArrayRegex = /\[([\s\S]*?)\]\s*TJ/gi;
     let tjArrMatch;
     while ((tjArrMatch = tjArrayRegex.exec(block)) !== null) {
@@ -246,21 +187,54 @@ function extractPdfText(bytes: Uint8Array): string {
       let innerMatch;
       let line = "";
       while ((innerMatch = innerRegex.exec(inner)) !== null) {
-        line += decodePdfString(innerMatch[1]);
+        line += innerMatch[1]
+          .replace(/\\n/g, "\n").replace(/\\r/g, "")
+          .replace(/\\\(/g, "(").replace(/\\\)/g, ")")
+          .replace(/\\\\/g, "\\");
       }
-      if (line.trim()) textParts.push(line);
+      if (line.trim()) parts.push(line.trim());
+    }
+
+    if (parts.length > 0) {
+      allTextBlocks.push(parts.join(" "));
     }
   }
 
-  return textParts.join("\n");
-}
+  if (allTextBlocks.length > 0 && pageCount > 0) {
+    // Distribute text blocks roughly across pages
+    const blocksPerPage = Math.max(1, Math.ceil(allTextBlocks.length / pageCount));
 
-function decodePdfString(s: string): string {
-  return s
-    .replace(/\\n/g, "\n")
-    .replace(/\\r/g, "\r")
-    .replace(/\\t/g, "\t")
-    .replace(/\\\(/g, "(")
-    .replace(/\\\)/g, ")")
-    .replace(/\\\\/g, "\\");
+    for (let i = 0; i < pageCount; i++) {
+      const start = i * blocksPerPage;
+      const end = Math.min(start + blocksPerPage, allTextBlocks.length);
+      const pageBlocks = allTextBlocks.slice(start, end);
+
+      if (pageBlocks.length > 0) {
+        slides.push({
+          title: pageBlocks[0].slice(0, 80) || `Page ${i + 1}`,
+          bullets: pageBlocks.length > 1
+            ? pageBlocks.slice(1).slice(0, 10)
+            : ["(Visual content on this page)"],
+          hasImage: false,
+        });
+      } else {
+        slides.push({
+          title: `Page ${i + 1}`,
+          bullets: ["(Visual content on this page)"],
+          hasImage: false,
+        });
+      }
+    }
+  } else {
+    // Couldn't extract text — create placeholder slides for each page
+    for (let i = 0; i < pageCount; i++) {
+      slides.push({
+        title: `Page ${i + 1}`,
+        bullets: ["(Visual/image content — text not extractable)"],
+        hasImage: true,
+      });
+    }
+  }
+
+  return Response.json({ slides, fileName: file.name, pageCount });
 }

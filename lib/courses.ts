@@ -50,6 +50,7 @@ export type Course = {
   tags: string[];
   status: CourseStatus;
   accent: string; // hex for the header gradient
+  coverImage?: string; // optional path to a cover image, e.g. "/course-covers/cse-310.jpg"
   unreadMessages?: number;
   overview?: string;
   files?: CourseFileNode[];
@@ -67,6 +68,7 @@ export const courses: Course[] = [
     tags: ["Core", "Computer Science"],
     status: "active",
     accent: "#8C1D40",
+    coverImage: "/course-covers/CSE 310.jpg",
     unreadMessages: 3,
     overview:
       "This course provides a rigorous introduction to the design and analysis of algorithms and fundamental data structures. Topics include arrays, linked lists, stacks, queues, trees, heaps, hash tables, graphs, sorting algorithms, and dynamic programming. Students will analyze time and space complexity using Big-O notation and implement solutions in C++ and Python. By the end of the semester you will be equipped to tackle technical interviews and reason about the performance of real-world software systems.",
@@ -137,6 +139,14 @@ export const courses: Course[] = [
             type: "file",
             size: "475 KB",
             modifiedAt: "Apr 14, 2026",
+            url: "#",
+          },
+          {
+            id: "phase-3-pdf",
+            name: "Phase 3.pdf",
+            type: "file",
+            size: "2.1 MB",
+            modifiedAt: "Apr 24, 2026",
             url: "#",
           },
         ],
@@ -227,6 +237,7 @@ export const courses: Course[] = [
     tags: ["Security", "Elective"],
     status: "active",
     accent: "#1F2937",
+    coverImage: "/course-covers/CSE 365.jpg",
     unreadMessages: 1,
   },
   {
@@ -239,6 +250,7 @@ export const courses: Course[] = [
     tags: ["Math", "Core"],
     status: "active",
     accent: "#334155",
+    coverImage: "/course-covers/MAT 267.jpg",
   },
   {
     id: "des-301",
@@ -250,6 +262,7 @@ export const courses: Course[] = [
     tags: ["Design", "Elective"],
     status: "active",
     accent: "#C2410C",
+    coverImage: "/course-covers/DSE 301.jpg",
     unreadMessages: 2,
     overview:
       "This course explores the principles and practice of building cohesive brand identities. Students will learn how visual systems — including color, typography, logo design, iconography, and layout — work together to communicate a brand's personality and values. Through a series of hands-on projects, you will develop a complete brand design system from concept to delivery, applying color theory, grid systems, and design thinking methodologies. By the end of the semester you will have a professional-grade brand identity portfolio piece ready for real-world use.",

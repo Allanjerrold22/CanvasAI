@@ -14,6 +14,7 @@ import { CourseAssignment, Course } from "@/lib/courses";
 type Props = {
   assignment: CourseAssignment;
   course: Course;
+  hasPlan?: boolean;
   onOpenPlanner: () => void;
 };
 
@@ -40,7 +41,7 @@ const statusMeta: Record<
   },
 };
 
-export default function AssignmentHeader({ assignment, course, onOpenPlanner }: Props) {
+export default function AssignmentHeader({ assignment, course, hasPlan, onOpenPlanner }: Props) {
   const meta = statusMeta[assignment.status];
 
   return (
@@ -84,7 +85,7 @@ export default function AssignmentHeader({ assignment, course, onOpenPlanner }: 
             className="bg-[var(--brand)] text-white text-[13px] font-medium px-4 py-2 rounded-full hover:bg-[var(--brand)]/90 transition-colors inline-flex items-center gap-2"
           >
             <SparkleIcon size={16} weight="fill" />
-            AI Planner
+            {hasPlan ? "Update Plan" : "AI Planner"}
           </button>
         </div>
       </div>

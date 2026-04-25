@@ -779,4 +779,54 @@ const mockSlideData: Record<string, SlideData[]> = {
       hasImage: true,
     },
   ],
+
+  // -----------------------------------------------------------------------
+  // PDF Examples (these would be actual PDF pages in a real implementation)
+  // -----------------------------------------------------------------------
+
+  "phase-3-pdf": [
+    {
+      title: "Phase 3 - Page 1",
+      bullets: ["This is the first page of your Phase 3.pdf document"],
+      hasImage: false,
+    },
+    {
+      title: "Phase 3 - Page 2", 
+      bullets: ["This is the second page of your Phase 3.pdf document"],
+      hasImage: false,
+    },
+    {
+      title: "Phase 3 - Page 3",
+      bullets: ["This is the third page of your Phase 3.pdf document"],
+      hasImage: false,
+    },
+    {
+      title: "Phase 3 - Page 4",
+      bullets: ["This is the fourth page of your Phase 3.pdf document"],
+      hasImage: false,
+    },
+    {
+      title: "Phase 3 - Page 5",
+      bullets: ["This is the fifth page of your Phase 3.pdf document"],
+      hasImage: false,
+    },
+  ],
+
+  "pdf-sample-1": [
+    {
+      title: "PDF Page 1",
+      bullets: ["This is a PDF document rendered as slides"],
+      hasImage: false,
+    },
+    {
+      title: "PDF Page 2", 
+      bullets: ["Each page becomes a slide in the reviewer"],
+      hasImage: false,
+    },
+    {
+      title: "PDF Page 3",
+      bullets: ["Navigation and voice features work the same"],
+      hasImage: false,
+    },
+  ],
 };

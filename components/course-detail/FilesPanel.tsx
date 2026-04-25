@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   UploadSimple as UploadSimpleIcon,
@@ -33,10 +33,14 @@ export default function FilesPanel({
     fileName: string;
     slides: SlideData[];
     uploadId: string;
+    label: string;
   } | null>(null);
-  const [uploadedFileNodes, setUploadedFileNodes] = useState<CourseFileNode[]>(
-    () => getAllUploadedFiles(courseId)
-  );
+  const [uploadedFileNodes, setUploadedFileNodes] = useState<CourseFileNode[]>([]);
+
+  // Load uploaded files from localStorage after mount to avoid hydration mismatch
+  useEffect(() => {
+    setUploadedFileNodes(getAllUploadedFiles(courseId));
+  }, [courseId]);
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
@@ -73,6 +77,27 @@ export default function FilesPanel({
     setUploadError(null);
 
     try {
+      const isPdf = file.name.toLowerCase().endsWith(".pdf");
+
+      // Step 1: Save the file to public/uploads/ for persistent access
+      const uploadFormData = new FormData();
+      uploadFormData.append("file", file);
+
+      const uploadRes = await fetch("/api/upload-file", {
+        method: "POST",
+        body: uploadFormData,
+      });
+
+      let savedFileUrl: string | undefined;
+      if (uploadRes.ok) {
+        const uploadData = await uploadRes.json();
+        savedFileUrl = uploadData.url;
+        console.log("[FilesPanel] File saved to:", savedFileUrl);
+      } else {
+        console.warn("[FilesPanel] Could not save file to public, continuing with in-memory only");
+      }
+
+      // Step 2: Parse the file for slide data
       const formData = new FormData();
       formData.append("file", file);
 
@@ -89,16 +114,20 @@ export default function FilesPanel({
       const data = await res.json();
       const uploadId = `upload-${Date.now()}`;
 
+      // Save with the public file URL so it persists across reloads
       saveUpload(uploadId, {
         fileName: data.fileName,
         slides: data.slides,
+        pdfFile: isPdf ? savedFileUrl : undefined,
       });
 
       // Show folder picker
+      const isPdfFile = data.fileName.toLowerCase().endsWith(".pdf");
       setPendingUpload({
         fileName: data.fileName,
         slides: data.slides,
         uploadId,
+        label: isPdfFile ? `${data.slides.length} pages` : `${data.slides.length} slides`,
       });
       setShowFolderPicker(true);
     } catch (err) {
@@ -116,7 +145,7 @@ export default function FilesPanel({
       id: pendingUpload.uploadId,
       name: pendingUpload.fileName,
       type: "file",
-      size: `${pendingUpload.slides.length} slides`,
+      size: pendingUpload.label,
       modifiedAt: new Date().toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
@@ -145,7 +174,7 @@ export default function FilesPanel({
       id: pendingUpload.uploadId,
       name: pendingUpload.fileName,
       type: "file",
-      size: `${pendingUpload.slides.length} slides`,
+      size: pendingUpload.label,
       modifiedAt: new Date().toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",

@@ -17,6 +17,7 @@ import ConfirmationStep from "./ConfirmationStep";
 
 type Props = {
   assignment: CourseAssignment;
+  course: { id: string; code: string };
   onClose: () => void;
   onPlanConfirmed: (milestones: Milestone[]) => void;
   initialPhase: "thinking" | "plan-selection";
@@ -26,6 +27,7 @@ type ModalPhase = "confirm" | "thinking" | "plan-selection" | "permission" | "co
 
 export default function AIPlannerModal({
   assignment,
+  course,
   onClose,
   onPlanConfirmed,
   initialPhase,
@@ -249,6 +251,11 @@ export default function AIPlannerModal({
         {phase === "confirmation" && (
           <ConfirmationStep
             plan={selectedPlan!}
+            courseId={course.id}
+            courseCode={course.code}
+            assignmentId={assignment.id}
+            assignmentTitle={assignment.title}
+            teammates={assignment.teammates}
             calendarPermission={calendarPermission!}
             googlePermission={googlePermission!}
             onConfirm={(milestones) => onPlanConfirmed(milestones)}

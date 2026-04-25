@@ -1,3 +1,4 @@
+import Image from "next/image";
 import type { Course } from "@/lib/courses";
 
 const statusStyles: Record<
@@ -23,16 +24,37 @@ export default function HeroBanner({ course }: { course: Course }) {
 
   return (
     <div
-      className="relative w-full min-h-[220px] flex flex-col justify-end px-8 py-8"
-      style={{
-        background: `linear-gradient(135deg, ${course.accent} 0%, ${course.accent}CC 45%, #ffffff22 100%)`,
-      }}
+      className="relative w-full min-h-[220px] flex flex-col justify-end px-8 py-8 overflow-hidden"
+      style={
+        !course.coverImage
+          ? {
+              background: `linear-gradient(135deg, ${course.accent} 0%, ${course.accent}CC 45%, #ffffff22 100%)`,
+            }
+          : undefined
+      }
     >
+      {/* Cover image */}
+      {course.coverImage && (
+        <Image
+          src={course.coverImage}
+          alt={`${course.name} cover`}
+          fill
+          className="object-cover"
+          sizes="100vw"
+          priority
+        />
+      )}
+
+      {/* Dark overlay for text legibility */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-black/10" />
+
       {/* Radial highlight overlay */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.18),transparent_55%)]" />
+      {!course.coverImage && (
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.18),transparent_55%)]" />
+      )}
 
       {/* Status badge — top right */}
-      <div className="absolute top-6 right-6">
+      <div className="absolute top-6 right-6 z-10">
         <span
           className={`text-[11.5px] font-medium px-2.5 py-1 rounded-full ${status.className}`}
         >

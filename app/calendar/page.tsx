@@ -11,16 +11,11 @@ import {
 } from "@phosphor-icons/react/dist/ssr";
 import PageHeader from "@/components/PageHeader";
 import { courses } from "@/lib/courses";
+import { CalendarEvent, loadEventsFromStorage, saveEventsToStorage } from "@/lib/calendar-store";
 
 // ── Types ──
 
-type CalendarEvent = {
-  id: string;
-  title: string;
-  date: Date;
-  color: string;
-  type: "assignment" | "lecture" | "study" | "custom";
-};
+type ViewMode = "month" | "week" | "day";
 
 type ViewMode = "month" | "week" | "day";
 
@@ -111,6 +106,18 @@ function buildCourseEvents(): CalendarEvent[] {
   return events;
 }
 
+function initializeEvents(): CalendarEvent[] {
+  const courseEvents = buildCourseEvents();
+  const storedEvents = loadEventsFromStorage();
+  
+  // Merge: stored events override course events with same ID
+  const eventMap = new Map<string, CalendarEvent>();
+  courseEvents.forEach(e => eventMap.set(e.id, e));
+  storedEvents.forEach(e => eventMap.set(e.id, e));
+  
+  return Array.from(eventMap.values());
+}
+
 const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const HOURS = Array.from({ length: 14 }, (_, i) => i + 7); // 7 AM to 8 PM
 
@@ -120,11 +127,23 @@ export default function CalendarPage() {
   const today = new Date();
   const [currentDate, setCurrentDate] = useState(new Date(2026, 3, 1)); // April 2026
   const [viewMode, setViewMode] = useState<ViewMode>("month");
-  const [events, setEvents] = useState<CalendarEvent[]>(buildCourseEvents);
+  const [events, setEvents] = useState<CalendarEvent[]>(initializeEvents);
   const [showNewEvent, setShowNewEvent] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [newEventTitle, setNewEventTitle] = useState("");
   const [newEventColor, setNewEventColor] = useState("#8C1D40");
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  const [showEventDetails, setShowEventDetails] = useState<CalendarEvent | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+
+  // Save to localStorage whenever events change
+  const updateEvents = (newEvents: CalendarEvent[] | ((prev: CalendarEvent[]) => CalendarEvent[])) => {
+    setEvents((prev) => {
+      const updated = typeof newEvents === "function" ? newEvents(prev) : newEvents;
+      saveEventsToStorage(updated);
+      return updated;
+    });
+  };
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -177,14 +196,39 @@ export default function CalendarPage() {
       color: newEventColor,
       type: "custom",
     };
-    setEvents((prev) => [...prev, event]);
+    updateEvents((prev) => [...prev, event]);
     setNewEventTitle("");
     setShowNewEvent(false);
     setSelectedDate(null);
   }
 
+  function updateEvent() {
+    if (!editingEvent || !newEventTitle.trim() || !selectedDate) return;
+    updateEvents((prev) =>
+      prev.map((e) =>
+        e.id === editingEvent.id
+          ? { ...e, title: newEventTitle.trim(), date: selectedDate, color: newEventColor }
+          : e
+      )
+    );
+    setNewEventTitle("");
+    setEditingEvent(null);
+    setSelectedDate(null);
+    setShowEventDetails(null);
+  }
+
   function deleteEvent(id: string) {
-    setEvents((prev) => prev.filter((e) => e.id !== id));
+    updateEvents((prev) => prev.filter((e) => e.id !== id));
+    setShowDeleteConfirm(null);
+    setShowEventDetails(null);
+  }
+
+  function openEditModal(event: CalendarEvent) {
+    setEditingEvent(event);
+    setNewEventTitle(event.title);
+    setSelectedDate(event.date);
+    setNewEventColor(event.color);
+    setShowEventDetails(null);
   }
 
   // Month grid
@@ -327,9 +371,13 @@ export default function CalendarPage() {
                           {dayEvents.slice(0, 3).map((e) => (
                             <div
                               key={e.id}
-                              className="text-[10.5px] px-1.5 py-0.5 rounded-md text-white truncate"
+                              className="text-[10.5px] px-1.5 py-0.5 rounded-md text-white truncate cursor-pointer hover:opacity-90 transition-opacity"
                               style={{ backgroundColor: e.color }}
                               title={e.title}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                setShowEventDetails(e);
+                              }}
                             >
                               {e.title}
                             </div>
@@ -395,9 +443,13 @@ export default function CalendarPage() {
                           dayEvents.slice(0, 2).map((e) => (
                             <div
                               key={e.id}
-                              className="text-[10px] px-1 py-0.5 rounded text-white truncate mb-0.5"
+                              className="text-[10px] px-1 py-0.5 rounded text-white truncate mb-0.5 cursor-pointer hover:opacity-90 transition-opacity"
                               style={{ backgroundColor: e.color }}
                               title={e.title}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                setShowEventDetails(e);
+                              }}
                             >
                               {e.title}
                             </div>
@@ -435,21 +487,14 @@ export default function CalendarPage() {
                       eventsForDate(currentDate).map((e) => (
                         <div
                           key={e.id}
-                          className="flex items-center gap-2 text-[12px] px-2 py-1.5 rounded-lg text-white mb-1 group"
+                          className="flex items-center gap-2 text-[12px] px-2 py-1.5 rounded-lg text-white mb-1 cursor-pointer hover:opacity-90 transition-opacity"
                           style={{ backgroundColor: e.color }}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            setShowEventDetails(e);
+                          }}
                         >
                           <span className="flex-1 truncate">{e.title}</span>
-                          {e.type === "custom" && (
-                            <button
-                              onClick={(ev) => {
-                                ev.stopPropagation();
-                                deleteEvent(e.id);
-                              }}
-                              className="opacity-0 group-hover:opacity-100 transition-opacity"
-                            >
-                              <TrashIcon size={12} />
-                            </button>
-                          )}
                         </div>
                       ))}
                   </div>
@@ -460,15 +505,18 @@ export default function CalendarPage() {
         )}
       </div>
 
-      {/* ── New Event Modal ── */}
-      {showNewEvent && (
+      {/* ── New/Edit Event Modal ── */}
+      {(showNewEvent || editingEvent) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm animate-fadeIn">
           <div className="bg-white rounded-2xl shadow-2xl border border-ink-border/30 w-full max-w-sm mx-4 overflow-hidden animate-slideUp">
             <div className="flex items-center justify-between px-5 py-4 border-b border-ink-border/30">
-              <h3 className="text-[15px] font-semibold">New Event</h3>
+              <h3 className="text-[15px] font-semibold">
+                {editingEvent ? "Edit Event" : "New Event"}
+              </h3>
               <button
                 onClick={() => {
                   setShowNewEvent(false);
+                  setEditingEvent(null);
                   setNewEventTitle("");
                 }}
                 className="w-7 h-7 grid place-items-center rounded-full hover:bg-surface-muted text-ink-muted"
@@ -508,7 +556,9 @@ export default function CalendarPage() {
                   className="w-full px-3 py-2 text-[13px] border border-ink-border rounded-xl bg-surface placeholder:text-ink-subtle focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/30 focus:border-[var(--brand)]"
                   autoFocus
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") addEvent();
+                    if (e.key === "Enter") {
+                      editingEvent ? updateEvent() : addEvent();
+                    }
                   }}
                 />
               </div>
@@ -539,6 +589,7 @@ export default function CalendarPage() {
               <button
                 onClick={() => {
                   setShowNewEvent(false);
+                  setEditingEvent(null);
                   setNewEventTitle("");
                 }}
                 className="text-[13px] text-ink-muted hover:text-ink px-3 py-1.5 transition-colors"
@@ -546,11 +597,100 @@ export default function CalendarPage() {
                 Cancel
               </button>
               <button
-                onClick={addEvent}
+                onClick={editingEvent ? updateEvent : addEvent}
                 disabled={!newEventTitle.trim()}
                 className="text-[13px] font-medium bg-ink text-white px-4 py-1.5 rounded-full hover:bg-ink/90 transition-colors disabled:opacity-40"
               >
-                Add Event
+                {editingEvent ? "Save Changes" : "Add Event"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Event Details Modal ── */}
+      {showEventDetails && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl border border-ink-border/30 w-full max-w-sm mx-4 overflow-hidden animate-slideUp">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-ink-border/30">
+              <h3 className="text-[15px] font-semibold">Event Details</h3>
+              <button
+                onClick={() => setShowEventDetails(null)}
+                className="w-7 h-7 grid place-items-center rounded-full hover:bg-surface-muted text-ink-muted"
+              >
+                <XIcon size={14} />
+              </button>
+            </div>
+
+            <div className="px-5 py-4">
+              <div
+                className="w-full px-4 py-3 rounded-xl text-white font-medium mb-4"
+                style={{ backgroundColor: showEventDetails.color }}
+              >
+                {showEventDetails.title}
+              </div>
+
+              <div className="flex items-center gap-2 text-[13px] text-ink-muted mb-1">
+                <ClockIcon size={16} />
+                <span>
+                  {showEventDetails.date.toLocaleDateString("en-US", {
+                    weekday: "long",
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </span>
+              </div>
+
+              <div className="text-[12px] text-ink-subtle mt-2 px-2 py-1.5 bg-surface-muted/50 rounded-lg">
+                Type: {showEventDetails.type.charAt(0).toUpperCase() + showEventDetails.type.slice(1)}
+              </div>
+            </div>
+
+            <div className="px-5 py-3 border-t border-ink-border/20 flex justify-end gap-2">
+              <button
+                onClick={() => setShowDeleteConfirm(showEventDetails.id)}
+                className="text-[13px] font-medium text-red-600 hover:text-red-700 px-3 py-1.5 transition-colors"
+              >
+                Delete
+              </button>
+              <button
+                onClick={() => openEditModal(showEventDetails)}
+                className="text-[13px] font-medium bg-ink text-white px-4 py-1.5 rounded-full hover:bg-ink/90 transition-colors"
+              >
+                Edit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete Confirmation Modal ── */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-2xl shadow-2xl border border-ink-border/30 w-full max-w-sm mx-4 overflow-hidden animate-slideUp">
+            <div className="px-5 py-4 border-b border-ink-border/30">
+              <h3 className="text-[15px] font-semibold">Delete Event</h3>
+            </div>
+
+            <div className="px-5 py-4">
+              <p className="text-[13px] text-ink-muted">
+                Are you sure you want to delete this event? This action cannot be undone.
+              </p>
+            </div>
+
+            <div className="px-5 py-3 border-t border-ink-border/20 flex justify-end gap-2">
+              <button
+                onClick={() => setShowDeleteConfirm(null)}
+                className="text-[13px] text-ink-muted hover:text-ink px-3 py-1.5 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteEvent(showDeleteConfirm)}
+                className="text-[13px] font-medium bg-red-600 text-white px-4 py-1.5 rounded-full hover:bg-red-700 transition-colors"
+              >
+                Delete
               </button>
             </div>
           </div>

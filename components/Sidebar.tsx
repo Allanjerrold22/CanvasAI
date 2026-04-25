@@ -10,6 +10,7 @@ import {
   SignOutIcon,
   CaretRightIcon,
   GraduationCapIcon,
+  ListChecksIcon,
 } from "@phosphor-icons/react/dist/ssr";
 
 type NavItem = {
@@ -21,6 +22,7 @@ type NavItem = {
 const primaryNav: NavItem[] = [
   { label: "Courses", href: "/", icon: BooksIcon },
   { label: "Assignments", href: "/assignments", icon: NotePencilIcon },
+  { label: "Tasks & Plans", href: "/tasks", icon: ListChecksIcon },
   { label: "Calendar", href: "/calendar", icon: CalendarDotsIcon },
   { label: "SparkyAI", href: "/sparky", icon: SparkleIcon },
 ];

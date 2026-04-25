@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import {
   CalendarBlankIcon,
   ChalkboardTeacherIcon,
@@ -68,14 +69,26 @@ export default function CourseCard({ course }: { course: Course }) {
       </div>
 
       {/* Cover */}
-      <div className="mx-4 mb-4 h-[148px] rounded-xl relative overflow-hidden">
-        <div
-          className="absolute inset-0"
-          style={{
-            background: `linear-gradient(135deg, ${course.accent} 0%, ${course.accent}CC 45%, #ffffff22 100%)`,
-          }}
-        />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.25),transparent_50%)]" />
+      <div className="mx-4 mb-4 h-[148px] rounded-lg relative overflow-hidden">
+        {course.coverImage ? (
+          <Image
+            src={course.coverImage}
+            alt={`${course.name} cover`}
+            fill
+            className="object-cover"
+            sizes="(max-width: 640px) 100vw, (max-width: 1280px) 50vw, 33vw"
+          />
+        ) : (
+          <div
+            className="absolute inset-0"
+            style={{
+              background: `linear-gradient(135deg, ${course.accent} 0%, ${course.accent}CC 45%, #ffffff22 100%)`,
+            }}
+          />
+        )}
+        {/* Overlay gradient for text legibility */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.15),transparent_50%)]" />
         <div className="absolute inset-0 p-4 flex flex-col justify-end text-white">
           <div className="text-[11px] opacity-80 tracking-[0.08em] uppercase">
             {course.code}

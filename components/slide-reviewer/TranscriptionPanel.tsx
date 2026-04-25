@@ -32,7 +32,7 @@ export default function TranscriptionPanel({
   return (
     <div
       ref={scrollRef}
-      className="max-h-[140px] overflow-y-auto px-5 py-3"
+      className="max-h-[140px] overflow-y-auto px-2 py-2 scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-transparent"
       aria-live="polite"
       role="log"
     >
@@ -43,16 +43,16 @@ export default function TranscriptionPanel({
         return (
           <div key={entry.id}>
             {showHeading && (
-              <div className="text-[10px] uppercase tracking-wider text-ink-subtle font-medium mt-2 mb-1">
+              <div className="text-[10px] uppercase tracking-wider text-gray-500 font-medium mt-2 mb-1">
                 Slide {entry.slideIndex + 1}
               </div>
             )}
             {entry.speaker === "agent" ? (
-              <p className="text-[13px] text-ink/80 leading-relaxed">
+              <p className="text-[13px] text-gray-400 leading-relaxed">
                 {entry.text}
               </p>
             ) : (
-              <p className="text-[13px] text-[var(--brand)] font-medium leading-relaxed">
+              <p className="text-[13px] text-[#8C1D40] font-medium leading-relaxed">
                 You: {entry.text}
               </p>
             )}

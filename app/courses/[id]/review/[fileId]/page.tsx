@@ -108,6 +108,11 @@ export default async function SlideReviewerPage({ params }: Props) {
     );
   }
 
+  // Check if this is a PDF file
+  const isPDF = fileNode.name.toLowerCase().endsWith('.pdf');
+  // Use the local PDF file from public folder
+  const pdfFile = isPDF ? `/sample-pdfs/${fileNode.name}` : undefined;
+
   return (
     <SlideReviewerClient
       courseName={course.name}
@@ -115,6 +120,8 @@ export default async function SlideReviewerPage({ params }: Props) {
       fileName={fileNode.name}
       fileId={fileId}
       slides={slides}
+      isPDF={isPDF}
+      pdfFile={pdfFile}
     />
   );
 }

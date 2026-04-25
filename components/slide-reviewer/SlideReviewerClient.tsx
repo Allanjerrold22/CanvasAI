@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
   ArrowLeft as ArrowLeftIcon,
@@ -10,11 +10,18 @@ import {
   X as XIcon,
   Sparkle as SparkleIcon,
   Stop as StopIcon,
+  CircleNotch as SpinnerIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import type { SlideData } from "@/lib/slides";
+import {
+  EnrichedSlide,
+  getEnrichmentForFile,
+  saveEnrichmentForFile,
+} from "@/lib/enrichment-store";
 import { useVoiceAgent } from "@/hooks/useVoiceAgent";
 import TranscriptionPanel from "./TranscriptionPanel";
 import SlideCanvas from "./SlideCanvas";
+import PDFSlideCanvas from "./PDFSlideCanvas";
 
 type SlideReviewerClientProps = {
   courseName: string;
@@ -24,18 +31,45 @@ type SlideReviewerClientProps = {
   slides: SlideData[];
   /** @deprecated — no longer used, slides render via SlideCanvas */
   fileBlobUrl?: string;
+  /** PDF file URL for PDF presentations */
+  pdfFile?: string;
+  /** Whether this is a PDF presentation */
+  isPDF?: boolean;
 };
 
 export default function SlideReviewerClient({
   courseName,
   courseId,
   fileName,
+  fileId,
   slides,
   fileBlobUrl,
+  pdfFile,
+  isPDF = false,
 }: SlideReviewerClientProps) {
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showTranscript, setShowTranscript] = useState(true);
+
+  // Claude PDF understanding state
+  const [enrichedSlides, setEnrichedSlides] = useState<EnrichedSlide[] | null>(null);
+  const [enriching, setEnriching] = useState(false);
+  const [enrichError, setEnrichError] = useState<string | null>(null);
+  const hasEnrichedRef = useRef(false);
+
+  // Check for cached enrichment on mount
+  useEffect(() => {
+    const cached = getEnrichmentForFile(fileId, courseId);
+    if (cached) {
+      console.log("[SlideReviewer] Using cached enrichment for", fileId);
+      setEnrichedSlides(cached.enrichedSlides);
+      hasEnrichedRef.current = true;
+    }
+  }, [fileId, courseId]);
+
+  // Use enriched slides (with Claude's teaching scripts) when available,
+  // otherwise fall back to raw slides
+  const activeSlides: SlideData[] = enrichedSlides ?? slides;
 
   const handleSlideComplete = useCallback((nextIndex: number) => {
     setCurrentSlideIndex(nextIndex);
@@ -45,13 +79,13 @@ export default function SlideReviewerClient({
     state: voiceState,
     startSession,
     stopSession,
-  } = useVoiceAgent(slides, handleSlideComplete);
+  } = useVoiceAgent(activeSlides, handleSlideComplete, enrichedSlides ?? undefined);
 
   // Keyboard navigation
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "ArrowRight") {
-        setCurrentSlideIndex((prev) => Math.min(prev + 1, slides.length - 1));
+        setCurrentSlideIndex((prev) => Math.min(prev + 1, (enrichedSlides ?? slides).length - 1));
       } else if (e.key === "ArrowLeft") {
         setCurrentSlideIndex((prev) => Math.max(prev - 1, 0));
       } else if (e.key === "Escape") {
@@ -60,11 +94,88 @@ export default function SlideReviewerClient({
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [slides.length]);
+  }, [slides.length, enrichedSlides]);
 
+  /**
+   * Sends the PDF (or slide text) to Claude for deep understanding,
+   * then starts the ElevenLabs voice session with the enriched knowledge.
+   */
+  async function handleStart() {
+    // If we already have enriched slides (from cache or previous run), just start
+    if (hasEnrichedRef.current && enrichedSlides) {
+      console.log("[SlideReviewer] Using existing enrichment, starting session");
+      startSession(0);
+      return;
+    }
+
+    // Check cache again (in case it was loaded after initial render)
+    const cached = getEnrichmentForFile(fileId, courseId);
+    if (cached) {
+      console.log("[SlideReviewer] Found cached enrichment, using it");
+      setEnrichedSlides(cached.enrichedSlides);
+      hasEnrichedRef.current = true;
+      startSession(0);
+      return;
+    }
+
+    setEnriching(true);
+    setEnrichError(null);
+
+    try {
+      let requestBody: Record<string, unknown>;
+
+      if (isPDF && pdfFile) {
+        // Fetch the PDF and convert to base64 for Claude's document understanding
+        const pdfResponse = await fetch(pdfFile);
+        const pdfBuffer = await pdfResponse.arrayBuffer();
+        const pdfBase64 = btoa(
+          new Uint8Array(pdfBuffer).reduce(
+            (data, byte) => data + String.fromCharCode(byte),
+            ""
+          )
+        );
+        requestBody = { pdfBase64, pageCount: slides.length };
+      } else {
+        // Send slide text for PPTX/mock data
+        requestBody = {
+          slides: slides.map((s) => ({
+            title: s.title,
+            bullets: s.bullets,
+            hasImage: s.hasImage,
+          })),
+        };
+      }
+
+      const res = await fetch("/api/slide-understand", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!res.ok) throw new Error("Claude analysis failed");
+
+      const data = await res.json();
+      hasEnrichedRef.current = true;
+      setEnrichedSlides(data.enrichedSlides);
+
+      // Save to cache for future use
+      saveEnrichmentForFile(fileId, courseId, fileName, data.enrichedSlides);
+      console.log("[SlideReviewer] Saved enrichment to cache for", fileId);
+
+      startSession(0);
+    } catch (err) {
+      console.warn("[SlideReviewer] Claude analysis failed, falling back to raw slides:", err);
+      setEnrichError("AI analysis unavailable — using raw slides.");
+      hasEnrichedRef.current = true;
+      startSession(0);
+    } finally {
+      setEnriching(false);
+    }
+  }
+
+  const isEnrichingOrConnecting = enriching || voiceState.status === "connecting";
   const isPlaying = voiceState.status === "playing";
-  const isIdle =
-    voiceState.status === "idle" || voiceState.status === "stopped";
+  const isIdle = voiceState.status === "idle" || voiceState.status === "stopped";
 
   const slide = slides[currentSlideIndex];
 
@@ -88,6 +199,12 @@ export default function SlideReviewerClient({
         </div>
 
         <div className="flex items-center gap-2">
+          {enrichedSlides && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--brand-tint)] text-[var(--brand)] text-[11px] font-medium">
+              <SparkleIcon size={11} weight="fill" />
+              AI-enhanced
+            </span>
+          )}
           <span className="text-[12px] text-ink-muted font-medium tabular-nums">
             {currentSlideIndex + 1} / {slides.length}
           </span>
@@ -107,11 +224,20 @@ export default function SlideReviewerClient({
         <div className="flex-1 flex flex-col items-center justify-center p-6 relative">
           {/* Slide display area */}
           <div className="w-full max-w-5xl aspect-[16/10] rounded-2xl shadow-lg border border-ink-border/20 overflow-hidden relative">
-            <SlideCanvas
-              slide={slide}
-              slideIndex={currentSlideIndex}
-              totalSlides={slides.length}
-            />
+            {isPDF ? (
+              <PDFSlideCanvas
+                slideIndex={currentSlideIndex}
+                totalSlides={slides.length}
+                pdfFile={pdfFile}
+                isPDF={true}
+              />
+            ) : (
+              <SlideCanvas
+                slide={slide}
+                slideIndex={currentSlideIndex}
+                totalSlides={slides.length}
+              />
+            )}
 
             {/* Narrating indicator */}
             {isPlaying && (
@@ -122,6 +248,16 @@ export default function SlideReviewerClient({
                   <div className="wave-bar" style={{ animationDelay: "0.4s" }} />
                 </div>
                 <span className="text-[11px] font-medium text-ink-muted">Narrating</span>
+              </div>
+            )}
+
+            {/* Enriching overlay */}
+            {enriching && (
+              <div className="absolute inset-0 bg-black/30 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
+                <SpinnerIcon size={28} className="text-white animate-spin" />
+                <p className="text-white text-[13px] font-medium">
+                  SparkyAI is analyzing your slides…
+                </p>
               </div>
             )}
           </div>
@@ -147,8 +283,6 @@ export default function SlideReviewerClient({
               <CaretRightIcon size={18} weight="bold" />
             </button>
           </div>
-
-          {/* Remove old transcription overlay — now inside floating module */}
         </div>
 
         {/* ── Collapsible right sidebar ── */}
@@ -181,13 +315,20 @@ export default function SlideReviewerClient({
                         : "border-transparent hover:border-ink-border/60"
                     }`}
                   >
-                    {/* Mini slide preview */}
-                    <SlideCanvas
-                      slide={s}
-                      slideIndex={i}
-                      totalSlides={slides.length}
-                    />
-                    {/* Slide number overlay */}
+                    {isPDF ? (
+                      <PDFSlideCanvas
+                        slideIndex={i}
+                        totalSlides={slides.length}
+                        pdfFile={pdfFile}
+                        isPDF={true}
+                      />
+                    ) : (
+                      <SlideCanvas
+                        slide={s}
+                        slideIndex={i}
+                        totalSlides={slides.length}
+                      />
+                    )}
                     <div className="absolute bottom-1 left-1.5 flex items-center gap-1">
                       {isNarrating && (
                         <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
@@ -209,76 +350,105 @@ export default function SlideReviewerClient({
         <div
           style={{
             width: isIdle
-              ? 240
-              : showTranscript && voiceState.transcription.length > 0
-                ? 440
-                : 180,
+              ? 300
+              : showTranscript && voiceState.transcription.length > 0 && voiceState.status !== "stopped"
+                ? 480
+                : 200,
             transition: "width 350ms cubic-bezier(0.25, 1, 0.5, 1)",
           }}
-          className="bg-white rounded-[18px] shadow-[0_4px_32px_-8px_rgba(0,0,0,0.12)] border border-ink-border/15 overflow-hidden"
+          className="relative rounded-[24px] p-[1px] bg-gradient-to-b from-gray-300/60 to-gray-400/30"
         >
-          {/* Transcript area — animated height */}
-          <div
-            style={{
-              maxHeight: showTranscript && voiceState.transcription.length > 0 ? 150 : 0,
-              opacity: showTranscript && voiceState.transcription.length > 0 ? 1 : 0,
-              transition: "max-height 350ms cubic-bezier(0.25, 1, 0.5, 1), opacity 250ms ease",
-            }}
-            className="overflow-hidden"
-          >
-            <div className="px-3 pt-2.5 pb-1.5 border-b border-ink-border/10">
-              <TranscriptionPanel
-                entries={voiceState.transcription}
-                currentSlideIndex={currentSlideIndex}
-              />
+          {/* Inner dark container */}
+          <div className="bg-[#1a1a1a] rounded-[23px] overflow-hidden backdrop-blur-xl shadow-[0_8px_40px_-12px_rgba(0,0,0,0.4)]">
+            {/* Transcript area */}
+            <div
+              style={{
+                maxHeight: showTranscript && voiceState.transcription.length > 0 && voiceState.status !== "stopped" ? 160 : 0,
+                opacity: showTranscript && voiceState.transcription.length > 0 && voiceState.status !== "stopped" ? 1 : 0,
+                transition: "max-height 350ms cubic-bezier(0.25, 1, 0.5, 1), opacity 250ms ease",
+              }}
+              className="overflow-hidden relative"
+            >
+              <div className="px-4 pt-3 pb-2">
+                <TranscriptionPanel
+                  entries={voiceState.transcription}
+                  currentSlideIndex={currentSlideIndex}
+                />
+              </div>
+              <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-[#1a1a1a] to-transparent pointer-events-none" />
             </div>
-          </div>
 
-          {/* Controls row — tight padding */}
-          <div className="flex items-center justify-center gap-2 px-3 py-2">
-            {isIdle && (
-              <>
-                <span className="text-[12px] text-ink-muted whitespace-nowrap">Ready to revise?</span>
-                <button
-                  onClick={() => startSession(0)}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-ink text-white text-[12px] font-medium hover:bg-ink/80 transition-colors whitespace-nowrap"
-                >
-                  <SparkleIcon size={12} weight="fill" />
-                  Start
-                </button>
-              </>
-            )}
+            {/* Controls row */}
+            <div className="flex items-center justify-center gap-3 px-4 py-3">
+              {isIdle && !isEnrichingOrConnecting && (
+                <>
+                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#8C1D40] to-[#5c1229] flex items-center justify-center shadow-lg">
+                    <SparkleIcon size={18} weight="fill" className="text-white" />
+                  </div>
+                  <span className="text-[13px] text-gray-400 whitespace-nowrap">
+                    {enrichError ? "Start (raw slides)" : "Ready to review?"}
+                  </span>
+                  <button
+                    onClick={handleStart}
+                    className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-[#2a2a2a] hover:bg-[#333] text-white text-[13px] font-medium transition-colors whitespace-nowrap border border-gray-700/50"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M8 5v14l11-7z"/>
+                    </svg>
+                    Start
+                  </button>
+                </>
+              )}
 
-            {isPlaying && (
-              <>
-                <div className="flex items-center gap-[2px]" aria-hidden="true">
-                  <div className="wave-bar !bg-ink" style={{ animationDelay: "0s" }} />
-                  <div className="wave-bar !bg-ink" style={{ animationDelay: "0.2s" }} />
-                  <div className="wave-bar !bg-ink" style={{ animationDelay: "0.4s" }} />
-                </div>
-                <button onClick={stopSession} aria-label="Stop" className="w-7 h-7 rounded-full hover:bg-surface-muted transition-colors grid place-items-center text-ink">
-                  <StopIcon size={14} weight="fill" />
-                </button>
-              </>
-            )}
+              {isEnrichingOrConnecting && (
+                <>
+                  <SpinnerIcon size={16} className="text-[#8C1D40] animate-spin shrink-0" />
+                  <span className="text-[13px] text-gray-400 whitespace-nowrap">
+                    {enriching ? "SparkyAI analyzing…" : "Connecting…"}
+                  </span>
+                </>
+              )}
 
-            {!isIdle && (
-              <>
-                <div className="w-px h-4 bg-ink-border/20" />
-                <button
-                  onClick={() => setShowTranscript(!showTranscript)}
-                  aria-label={showTranscript ? "Hide transcript" : "Show transcript"}
-                  className={`w-7 h-7 rounded-full grid place-items-center transition-all duration-200 ${
-                    showTranscript ? "bg-ink text-white" : "hover:bg-surface-muted text-ink-muted"
-                  }`}
-                >
-                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.5" />
-                    <path d="M4 7h8M4 10h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                </button>
-              </>
-            )}
+              {isPlaying && (
+                <>
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#8C1D40] to-[#5c1229] flex items-center justify-center shadow-lg">
+                    <SparkleIcon size={14} weight="fill" className="text-white" />
+                  </div>
+                  <div className="flex items-center gap-[3px]" aria-hidden="true">
+                    <div className="wave-bar !bg-gray-400" style={{ animationDelay: "0s" }} />
+                    <div className="wave-bar !bg-gray-400" style={{ animationDelay: "0.2s" }} />
+                    <div className="wave-bar !bg-gray-400" style={{ animationDelay: "0.4s" }} />
+                  </div>
+                  <button
+                    onClick={stopSession}
+                    aria-label="Stop"
+                    className="w-9 h-9 rounded-xl bg-[#2a2a2a] hover:bg-[#333] transition-colors grid place-items-center text-white border border-gray-700/50"
+                  >
+                    <StopIcon size={16} weight="fill" />
+                  </button>
+                </>
+              )}
+
+              {!isIdle && !isEnrichingOrConnecting && (
+                <>
+                  <div className="w-px h-5 bg-gray-700/50" />
+                  <button
+                    onClick={() => setShowTranscript(!showTranscript)}
+                    aria-label={showTranscript ? "Hide transcript" : "Show transcript"}
+                    className={`w-9 h-9 rounded-xl grid place-items-center transition-all duration-200 border ${
+                      showTranscript
+                        ? "bg-gradient-to-br from-[#8C1D40] to-[#5c1229] text-white border-transparent"
+                        : "bg-[#2a2a2a] hover:bg-[#333] text-gray-400 border-gray-700/50"
+                    }`}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.5" />
+                      <path d="M4 7h8M4 10h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>

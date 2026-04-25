@@ -27,3 +27,7 @@ next-env.d.ts
 
 # typescript
 *.tsbuildinfo
+
+# uploaded files
+public/sample-pdfs/*.pdf
+!public/sample-pdfs/Phase 3.pdf

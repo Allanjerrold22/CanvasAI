@@ -21,13 +21,18 @@ export default function UploadedSlideReviewer({
   const [data, setData] = useState<{
     fileName: string;
     slides: SlideData[];
+    pdfFile?: string;
   } | null>(null);
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
     const stored = getUpload(uploadId);
     if (stored) {
-      setData(stored);
+      setData({
+        fileName: stored.fileName,
+        slides: stored.slides,
+        pdfFile: stored.pdfFile,
+      });
     } else {
       setNotFound(true);
     }
@@ -61,6 +66,9 @@ export default function UploadedSlideReviewer({
     );
   }
 
+  // Check if this is a PDF file
+  const isPDF = data.fileName.toLowerCase().endsWith('.pdf');
+
   return (
     <SlideReviewerClient
       courseName={courseName}
@@ -68,6 +76,8 @@ export default function UploadedSlideReviewer({
       fileName={data.fileName}
       fileId={uploadId}
       slides={data.slides}
+      isPDF={isPDF}
+      pdfFile={data.pdfFile}
     />
   );
 }

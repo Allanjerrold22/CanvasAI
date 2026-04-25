@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { Conversation } from "@elevenlabs/client";
 import type { SlideData } from "@/lib/slides";
+import type { EnrichedSlide } from "@/lib/enrichment-store";
 
 export type TranscriptionEntry = {
   id: string;
@@ -21,33 +22,68 @@ type VoiceAgentState = {
 };
 
 /**
- * Build a full deck outline so the agent knows every slide upfront.
+ * Build a detailed deck map so the agent knows every slide's number, title,
+ * and content upfront. This is sent as the very first message so the agent
+ * has full awareness of the entire presentation structure.
  */
-function buildDeckContext(slides: SlideData[]): string {
-  const outline = slides
-    .map((s, i) => `Slide ${i + 1}: "${s.title}" — ${s.bullets.join("; ")}`)
-    .join("\n");
+function buildDeckContext(slides: SlideData[], enriched?: EnrichedSlide[]): string {
+  const slideMap = slides
+    .map((s, i) => {
+      const num = i + 1;
+      const e = enriched?.[i];
+      const content = e?.teachingScript
+        ? `  Content summary: ${e.teachingScript}\n  Key points: ${e.bullets?.join("; ") || s.bullets.join("; ")}`
+        : `  Key points: ${s.bullets.join("; ")}`;
+      return `[Slide ${num}] "${s.title}"\n${content}`;
+    })
+    .join("\n\n");
+
   return (
-    `You are a friendly, knowledgeable teaching assistant reviewing a presentation with a student. ` +
-    `The deck has ${slides.length} slides. Here is the full outline:\n\n${outline}\n\n` +
-    `Rules:\n` +
-    `- Explain each slide in 30-60 seconds in a clear, encouraging tone.\n` +
-    `- When you finish explaining a slide, say "NEXT_SLIDE" at the very end of your response so the app knows to advance.\n` +
-    `- If the student asks to go to a specific slide, say "GO_TO_SLIDE_X" (where X is the slide number) at the end of your response.\n` +
-    `- If the student asks a question about the current slide, answer it, then continue explaining.\n` +
-    `- If the student says "next" or "next slide", say "NEXT_SLIDE" at the end.\n` +
-    `- If the student says "previous" or "go back", say "PREV_SLIDE" at the end.\n` +
-    `- Do NOT read the commands out loud — just include them as text markers at the very end.`
+    `You are SparkyAI, a friendly and knowledgeable teaching assistant. ` +
+    `You are reviewing a presentation with a student. ` +
+    `The deck has ${slides.length} slides total.\n\n` +
+    `=== FULL SLIDE MAP ===\n${slideMap}\n=== END SLIDE MAP ===\n\n` +
+    `CRITICAL RULES:\n` +
+    `1. You are ALWAYS aware of which slide number you are currently on. When you explain a slide, reference its number naturally (e.g. "On slide 3, we see...").\n` +
+    `2. You know the content of EVERY slide. If the student asks "what's on slide 5?" or "go to the slide about sorting", you can identify the correct slide number.\n` +
+    `3. Do NOT automatically advance to the next slide. After explaining a slide, WAIT for the student to say "next", "next slide", or ask a question. Only then respond.\n` +
+    `4. When the student says "next" or "next slide", say NEXT_SLIDE at the very end of your message to advance.\n` +
+    `5. If the student asks to go to a specific slide by number (e.g. "go to slide 3"), say GO_TO_SLIDE_3 at the end.\n` +
+    `6. If the student asks to go to a slide by topic (e.g. "go to the slide about binary trees"), find the matching slide number from the slide map and say GO_TO_SLIDE_X.\n` +
+    `7. If the student says "previous" or "go back", say PREV_SLIDE at the end.\n` +
+    `8. If the student asks a question about the current slide, answer it thoroughly. Do NOT advance.\n` +
+    `9. If the student asks about content on a different slide, you can reference it from memory without navigating there, OR navigate if they ask.\n` +
+    `10. Do NOT read the navigation commands aloud — they are invisible markers for the app.\n` +
+    `11. Keep explanations to 30-60 seconds per slide. Be clear, encouraging, and educational.\n` +
+    `12. You can reference previous slides to build connections (e.g. "Remember on slide 2 we talked about...").\n` +
+    `13. After explaining a slide, end with a brief prompt like "Ready for the next slide?" or "Any questions about this?" and WAIT for the student's response.`
   );
 }
 
-function slidePrompt(slide: SlideData, index: number): string {
-  return `Now explain slide ${index + 1}: "${slide.title}". Key points: ${slide.bullets.join(". ")}`;
+/**
+ * Build the prompt for explaining a specific slide.
+ * Includes slide number prominently so the agent stays aware.
+ */
+function slidePrompt(slide: SlideData, index: number, totalSlides: number, enriched?: EnrichedSlide): string {
+  const num = index + 1;
+  if (enriched?.teachingScript) {
+    return (
+      `You are now on SLIDE ${num} of ${totalSlides}: "${slide.title}". ` +
+      `Use this teaching context as the basis for your explanation — ` +
+      `paraphrase it naturally: "${enriched.teachingScript}". ` +
+      `Key points: ${slide.bullets.join("; ")}. ` +
+      `Explain this slide, then wait for the student to say "next" before advancing.`
+    );
+  }
+  return (
+    `You are now on SLIDE ${num} of ${totalSlides}: "${slide.title}". ` +
+    `Key points: ${slide.bullets.join(". ")}. ` +
+    `Explain this slide clearly, then wait for the student to say "next" before advancing.`
+  );
 }
 
 /**
  * Parse agent messages for navigation commands.
- * Returns the command and the cleaned text (without the command).
  */
 function parseNavCommand(text: string): {
   command: "next" | "prev" | "goto" | null;
@@ -76,7 +112,8 @@ function parseNavCommand(text: string): {
 
 export function useVoiceAgent(
   slides: SlideData[],
-  onSlideComplete: (nextIndex: number) => void
+  onSlideComplete: (nextIndex: number) => void,
+  enrichedSlides?: EnrichedSlide[]
 ) {
   const [state, setState] = useState<VoiceAgentState>({
     status: "idle",
@@ -88,35 +125,44 @@ export function useVoiceAgent(
 
   const conversationRef = useRef<Awaited<ReturnType<typeof Conversation.startSession>> | null>(null);
   const slideIndexRef = useRef(0);
-  const slidesRef = useRef(slides);
-  const autoAdvanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const slidesRef = useRef<SlideData[]>(slides);
+  const enrichedRef = useRef<EnrichedSlide[] | undefined>(enrichedSlides);
   const hasSentFirstMessageRef = useRef(false);
-  const agentHasSpokenRef = useRef(false);
   slidesRef.current = slides;
+  enrichedRef.current = enrichedSlides;
 
   /**
-   * Auto-advance to the next slide. Called when the agent finishes speaking
-   * and switches to listening mode, with a short delay to allow for student
-   * interruption.
+   * Navigate to a specific slide and tell the agent.
    */
-  function scheduleAutoAdvance() {
-    // Cancel any pending auto-advance
-    if (autoAdvanceTimerRef.current) {
-      clearTimeout(autoAdvanceTimerRef.current);
+  function navigateToSlideInternal(targetIndex: number) {
+    if (targetIndex < 0 || targetIndex >= slidesRef.current.length) return;
+    if (targetIndex === slideIndexRef.current) return;
+
+    console.log("[VoiceAgent] Navigating to slide", targetIndex + 1);
+    slideIndexRef.current = targetIndex;
+    onSlideComplete(targetIndex);
+    setState((prev) => ({ ...prev, currentNarratingIndex: targetIndex }));
+
+    if (conversationRef.current) {
+      const slide = slidesRef.current[targetIndex];
+      const total = slidesRef.current.length;
+      conversationRef.current.sendUserMessage(
+        slidePrompt(slide, targetIndex, total, enrichedRef.current?.[targetIndex])
+      );
     }
+  }
 
-    autoAdvanceTimerRef.current = setTimeout(() => {
+  function handleNavCommand(command: "next" | "prev" | "goto", gotoSlide: number | null) {
+    let targetIndex: number;
+    if (command === "goto" && gotoSlide !== null) {
+      targetIndex = Math.max(0, Math.min(gotoSlide - 1, slidesRef.current.length - 1));
+    } else if (command === "prev") {
+      targetIndex = Math.max(0, slideIndexRef.current - 1);
+    } else {
+      // next
       const nextIndex = slideIndexRef.current + 1;
-      if (nextIndex < slidesRef.current.length && conversationRef.current) {
-        console.log("[VoiceAgent] Auto-advancing to slide", nextIndex + 1);
-        agentHasSpokenRef.current = false; // Reset for next slide
-        slideIndexRef.current = nextIndex;
-        onSlideComplete(nextIndex);
-        setState((prev) => ({ ...prev, currentNarratingIndex: nextIndex }));
-
-        const slide = slidesRef.current[nextIndex];
-        conversationRef.current.sendUserMessage(slidePrompt(slide, nextIndex));
-      } else if (nextIndex >= slidesRef.current.length) {
+      if (nextIndex >= slidesRef.current.length) {
+        // Last slide — end session
         console.log("[VoiceAgent] Last slide done, stopping");
         if (conversationRef.current) {
           conversationRef.current.endSession();
@@ -128,35 +174,12 @@ export function useVoiceAgent(
           currentNarratingIndex: null,
           agentSpeaking: false,
         }));
+        return;
       }
-    }, 3000); // 3 second delay before auto-advancing
-  }
-
-  function handleNavCommand(command: "next" | "prev" | "goto", gotoSlide: number | null) {
-    if (autoAdvanceTimerRef.current) {
-      clearTimeout(autoAdvanceTimerRef.current);
+      targetIndex = nextIndex;
     }
 
-    let targetIndex: number;
-    if (command === "goto" && gotoSlide !== null) {
-      targetIndex = Math.max(0, Math.min(gotoSlide - 1, slidesRef.current.length - 1));
-    } else if (command === "prev") {
-      targetIndex = Math.max(0, slideIndexRef.current - 1);
-    } else {
-      targetIndex = Math.min(slideIndexRef.current + 1, slidesRef.current.length - 1);
-    }
-
-    if (targetIndex !== slideIndexRef.current) {
-      console.log("[VoiceAgent] Navigating to slide", targetIndex + 1);
-      slideIndexRef.current = targetIndex;
-      onSlideComplete(targetIndex);
-      setState((prev) => ({ ...prev, currentNarratingIndex: targetIndex }));
-
-      if (conversationRef.current) {
-        const slide = slidesRef.current[targetIndex];
-        conversationRef.current.sendUserMessage(slidePrompt(slide, targetIndex));
-      }
-    }
+    navigateToSlideInternal(targetIndex);
   }
 
   const startSession = useCallback(
@@ -170,7 +193,6 @@ export function useVoiceAgent(
       }));
       slideIndexRef.current = slideIndex;
       hasSentFirstMessageRef.current = false;
-      agentHasSpokenRef.current = false;
 
       try {
         const res = await fetch("/api/slide-review", {
@@ -195,23 +217,32 @@ export function useVoiceAgent(
             console.log("[VoiceAgent] Connected");
             setState((prev) => ({ ...prev, status: "playing" }));
 
-            // Wait for connection to fully stabilize, then send the first message
+            // Send the full deck context + first slide prompt after connection stabilizes
             setTimeout(() => {
               const c = conv ?? conversationRef.current;
               if (c && !hasSentFirstMessageRef.current) {
                 hasSentFirstMessageRef.current = true;
-                const slide = slidesRef.current[slideIndexRef.current];
-                const msg = `Please explain this slide to me. The title is "${slide.title}" and the key points are: ${slide.bullets.join(". ")}`;
-                console.log("[VoiceAgent] Sending first user message...");
-                c.sendUserMessage(msg);
+                const idx = slideIndexRef.current;
+                const slide = slidesRef.current[idx];
+                const total = slidesRef.current.length;
+                const enriched = enrichedRef.current;
+
+                // First message: full deck context so the agent knows everything
+                const deckContext = buildDeckContext(slidesRef.current, enriched);
+
+                // Second part: start explaining the current slide
+                const firstSlidePrompt = slidePrompt(slide, idx, total, enriched?.[idx]);
+
+                const fullMessage = `${deckContext}\n\n--- START ---\n\n${firstSlidePrompt}`;
+
+                console.log("[VoiceAgent] Sending deck context + first slide prompt");
+                c.sendUserMessage(fullMessage);
               }
-            }, 1500); // 1.5s delay to let connection stabilize
+            }, 1500);
           },
 
           onDisconnect: () => {
-            console.log("[VoiceAgent] Disconnected, agentHasSpoken:", agentHasSpokenRef.current);
-            if (autoAdvanceTimerRef.current) clearTimeout(autoAdvanceTimerRef.current);
-            // Only set to stopped if we actually had a session going
+            console.log("[VoiceAgent] Disconnected");
             setState((prev) => ({
               ...prev,
               status: "stopped",
@@ -227,11 +258,10 @@ export function useVoiceAgent(
 
             if (!rawText || rawText.trim().length === 0) return;
 
-            // Check for navigation commands in agent messages
             if (source !== "user") {
+              // Agent message — check for navigation commands
               const { command, gotoSlide, cleanText } = parseNavCommand(rawText);
 
-              // Add transcription entry with cleaned text
               if (cleanText.length > 0) {
                 const entry: TranscriptionEntry = {
                   id: `agent-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -246,7 +276,7 @@ export function useVoiceAgent(
                 }));
               }
 
-              // Handle navigation command
+              // Only navigate when the agent explicitly says so
               if (command) {
                 handleNavCommand(command, gotoSlide);
               }
@@ -278,24 +308,8 @@ export function useVoiceAgent(
           onModeChange: (mode) => {
             const modeData = mode as { mode?: string };
             const isSpeaking = modeData.mode === "speaking";
-            console.log("[VoiceAgent] Mode:", modeData.mode, "hasSentFirst:", hasSentFirstMessageRef.current, "agentHasSpoken:", agentHasSpokenRef.current);
             setState((prev) => ({ ...prev, agentSpeaking: isSpeaking }));
-
-            if (isSpeaking) {
-              // Mark that the agent has spoken at least once
-              agentHasSpokenRef.current = true;
-              // Cancel any pending auto-advance when agent starts speaking
-              if (autoAdvanceTimerRef.current) {
-                clearTimeout(autoAdvanceTimerRef.current);
-                autoAdvanceTimerRef.current = null;
-              }
-            }
-
-            // Only auto-advance after the agent has actually spoken and then stopped
-            if (!isSpeaking && agentHasSpokenRef.current) {
-              console.log("[VoiceAgent] Agent finished speaking, scheduling auto-advance in 3s");
-              scheduleAutoAdvance();
-            }
+            // No auto-advance here — the agent controls navigation via NEXT_SLIDE commands
           },
 
           onStatusChange: (status) => {
@@ -334,7 +348,10 @@ export function useVoiceAgent(
 
     slideIndexRef.current = index;
     const slide = slidesRef.current[index];
-    const text = `${slide.title}. ${slide.bullets.join(". ")}.`;
+    const enriched = enrichedRef.current?.[index];
+    const text = enriched?.teachingScript
+      ? `Slide ${index + 1}: ${slide.title}. ${enriched.teachingScript}`
+      : `Slide ${index + 1}: ${slide.title}. ${slide.bullets.join(". ")}.`;
 
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
@@ -386,7 +403,6 @@ export function useVoiceAgent(
   // ── Public API ──
 
   const stopSession = useCallback(() => {
-    if (autoAdvanceTimerRef.current) clearTimeout(autoAdvanceTimerRef.current);
     if (conversationRef.current) {
       conversationRef.current.endSession();
       conversationRef.current = null;
@@ -402,14 +418,14 @@ export function useVoiceAgent(
   }, []);
 
   const navigateToSlide = useCallback((index: number) => {
-    if (autoAdvanceTimerRef.current) clearTimeout(autoAdvanceTimerRef.current);
     slideIndexRef.current = index;
     setState((prev) => ({ ...prev, currentNarratingIndex: index }));
 
     if (conversationRef.current) {
       const slide = slidesRef.current[index];
+      const total = slidesRef.current.length;
       conversationRef.current.sendUserMessage(
-        `The student clicked to go to slide ${index + 1}. ${slidePrompt(slide, index)}`
+        `The student clicked to go to slide ${index + 1}. ${slidePrompt(slide, index, total, enrichedRef.current?.[index])}`
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
