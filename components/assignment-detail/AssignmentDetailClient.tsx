@@ -40,7 +40,7 @@ export default function AssignmentDetailClient({ assignment, course }: Props) {
         />
       )}
 
-      <AssignmentTabBar assignment={assignment} />
+      <AssignmentTabBar assignment={assignment} course={course} />
 
       {isModalOpen && (
         <AIPlannerModal

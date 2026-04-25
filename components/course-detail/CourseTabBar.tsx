@@ -74,10 +74,10 @@ export default function CourseTabBar({ course }: { course: Course }) {
           >
             {t.id === "overview" && <OverviewPanel course={course} />}
             {t.id === "files" && (
-              <FilesPanel files={course.files} courseId={course.id} />
+              <FilesPanel files={course.files} courseId={course.id} courseName={course.name} />
             )}
             {t.id === "assignments" && (
-              <AssignmentsPanel assignments={course.assignments} />
+              <AssignmentsPanel assignments={course.assignments} courseName={course.name} />
             )}
           </div>
         ))}

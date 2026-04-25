@@ -21,9 +21,11 @@ import FileNode from "./FileNode";
 export default function FilesPanel({
   files,
   courseId,
+  courseName,
 }: {
   files: CourseFileNode[] | undefined;
   courseId: string;
+  courseName?: string;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [isUploading, setIsUploading] = useState(false);
@@ -212,6 +214,7 @@ export default function FilesPanel({
                 expanded={expanded}
                 onToggle={handleToggle}
                 courseId={courseId}
+                courseName={courseName}
               />
             ))}
           </ul>
