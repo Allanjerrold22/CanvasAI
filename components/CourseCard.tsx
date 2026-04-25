@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   CalendarBlankIcon,
   ChalkboardTeacherIcon,
@@ -29,7 +30,8 @@ export default function CourseCard({ course }: { course: Course }) {
   const status = statusStyles[course.status];
 
   return (
-    <article className="group bg-surface rounded-2xl border border-ink-border shadow-subtle hover:shadow-card transition-shadow overflow-hidden flex flex-col">
+    <Link href={`/courses/${course.id}`} className="block group">
+    <article className="bg-surface rounded-2xl border border-ink-border shadow-subtle hover:shadow-card transition-shadow overflow-hidden flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-4 pt-4 pb-3">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -122,6 +124,7 @@ export default function CourseCard({ course }: { course: Course }) {
         </div>
       </div>
     </article>
+    </Link>
   );
 }
 

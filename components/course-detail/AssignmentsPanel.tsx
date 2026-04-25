@@ -4,20 +4,9 @@ import {
   WarningCircleIcon,
   UploadSimpleIcon,
 } from "@phosphor-icons/react/dist/ssr";
-import Link from "next/link";
-import PageHeader from "@/components/PageHeader";
-import { courses, type CourseAssignment } from "@/lib/courses";
+import type { CourseAssignment } from "@/lib/courses";
 
-type AssignmentStatus = "due" | "submitted" | "overdue";
-
-type FlatAssignment = CourseAssignment & { courseLabel: string };
-
-const assignments: FlatAssignment[] = courses.flatMap((course) =>
-  (course.assignments ?? []).map((a) => ({
-    ...a,
-    courseLabel: `${course.code} · ${course.name}`,
-  }))
-);
+type AssignmentStatus = CourseAssignment["status"];
 
 const statusMeta: Record<
   AssignmentStatus,
@@ -40,31 +29,38 @@ const statusMeta: Record<
   },
 };
 
-export default function AssignmentsPage() {
+export default function AssignmentsPanel({
+  assignments,
+}: {
+  assignments: CourseAssignment[] | undefined;
+}) {
   return (
-    <div className="px-8 py-8 max-w-[1400px] mx-auto">
-      <PageHeader
-        title="Assignments"
-        subtitle="Submit work, track feedback, and stay ahead of deadlines."
-        action={
-          <button
-            type="button"
-            className="inline-flex items-center gap-2 bg-ink text-white text-[13px] font-medium px-4 py-2 rounded-full hover:bg-ink/90 transition-colors"
-          >
-            <UploadSimpleIcon size={14} weight="bold" />
-            Submit assignment
-          </button>
-        }
-      />
+    <div>
+      {/* Panel header */}
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-[16px] font-semibold">Assignments</h2>
+        <button
+          type="button"
+          className="inline-flex items-center gap-2 bg-ink text-white text-[13px] font-medium px-4 py-2 rounded-full hover:bg-ink/90 transition-colors"
+        >
+          <UploadSimpleIcon size={14} weight="bold" />
+          Submit assignment
+        </button>
+      </div>
 
-      <div className="mt-8 bg-surface border border-ink-border rounded-2xl shadow-subtle overflow-hidden">
-        <ul className="divide-y divide-ink-border">
-          {assignments.map((a) => {
-            const meta = statusMeta[a.status];
-            return (
-              <li key={a.id}>
-                <Link
-                  href={`/assignments/${a.id}`}
+      {/* List */}
+      {!assignments || assignments.length === 0 ? (
+        <div className="bg-surface border border-ink-border rounded-2xl shadow-subtle py-16 text-center text-ink-muted text-sm">
+          No assignments for this course yet.
+        </div>
+      ) : (
+        <div className="bg-surface border border-ink-border rounded-2xl shadow-subtle overflow-hidden">
+          <ul className="divide-y divide-ink-border">
+            {assignments.map((a) => {
+              const meta = statusMeta[a.status];
+              return (
+                <li
+                  key={a.id}
                   className="px-5 py-4 flex items-center gap-4 hover:bg-[var(--brand-tint)]/60 transition-colors cursor-pointer"
                 >
                   <div className="w-9 h-9 rounded-lg bg-surface-muted grid place-items-center text-ink-muted shrink-0">
@@ -75,7 +71,7 @@ export default function AssignmentsPage() {
                       {a.title}
                     </div>
                     <div className="text-[12.5px] text-ink-muted truncate">
-                      {a.courseLabel} · {a.dueDate}
+                      {a.dueDate}
                     </div>
                   </div>
                   <span
@@ -84,12 +80,12 @@ export default function AssignmentsPage() {
                     {meta.icon}
                     {meta.label}
                   </span>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
